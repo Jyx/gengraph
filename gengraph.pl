@@ -160,6 +160,8 @@ sub print_folder_dependencies {
 	foreach my $key (keys %folder_dependencies) {
 		my %hash   = map { $_, 1 } @{$folder_dependencies{$key}};
 		my @unique = keys %hash;
+		# Replace . with Root, this should be done in a nicer way.
+		$key =~ s/^.$/Root/g;
 		foreach my $folder (@unique) {
 			print $file "  \"$key\" -> \"$folder\"\n";
 		}
