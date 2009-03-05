@@ -17,11 +17,13 @@ my $dotfile = "mygraph";
 my $dotextension = "dot";
 my $picture_ext = "jpg";
 my $root_folder = ".";
+my $folder_view = 0;
 
 my $DOT_FILEHANDLE;
 
 my %existing_files;
 my %existing_folders;
+my %folder_dependencies;
 
 ################################################################################
 #  Sub routines                                                                #
@@ -41,6 +43,8 @@ sub parse_inparameters {
 			$graphvis = "twopi";
 		} elsif ($arg =~ m/^-png$/) {
 			$picture_ext = "png";
+		} elsif ($arg =~ m/^-f$/) {
+			$folder_view = 1;
 		} else {
 			$root_folder = $arg;
 		}
@@ -62,6 +66,7 @@ sub show_globals {
 	print "dotextension: $dotextension\n";
 	print "picture_ext: $picture_ext\n";
 	print "root_folder: $root_folder\n";
+	print "folder_view: $folder_view\n";
 	print "\n";
 }
 
@@ -150,6 +155,17 @@ sub print_folder_list {
 	}
 }
 
+sub print_folder_dependencies {
+	my $file = $_[0];
+	foreach my $key (keys %folder_dependencies) {
+		my %hash   = map { $_, 1 } @{$folder_dependencies{$key}};
+		my @unique = keys %hash;
+		foreach my $folder (@unique) {
+			print $file "  \"$key\" -> \"$folder\"\n";
+		}
+	}
+}
+
 sub is_file_known {
 	my $file_to_check = $_[0];
 	if ($existing_files{$file_to_check}) {
@@ -165,12 +181,14 @@ sub make_subgraphs {
 	foreach my $key (keys %existing_folders) {
 		if ($key eq ".") {
 			print $file "  subgraph \"clusterRoot\" {\n";
-			print $file "    label = \"clusterRoot\"\n";
+			print $file "    bgcolor=grey\n";
+			print $file "    label = \"Root\"\n";
 		} else {
 			my $modified_header = $key;
 			$modified_header =~ s/\.\///;
 			print $file "  subgraph \"cluster$modified_header\" {\n";
-			print $file "    label = \"cluster$modified_header\"\n";
+			print $file "    bgcolor=grey\n";
+			print $file "    label = \"$modified_header\"\n";
 		}
 		foreach my $filename (@{$existing_folders{$key}}) {
 			print "  $filename\n" if $debug;
@@ -212,8 +230,7 @@ sub parse_file {
 		foreach my $include_line (@include_files) {
 			chomp($include_line);
 
-			if ($include_line =~ m/^ *#include *[<"](.*)[">].*$/)
-			{
+			if ($include_line =~ m/^ *#include *[<"](.*)[">].*$/) {
 				if (&is_file_known($1)) {
 					print "  \"$parsed_filename\"-> \"$1\"\n" if $debug;
 					print $DOT_FILEHANDLE "  \"$parsed_filename\"-> \"$1\"\n";
@@ -233,6 +250,48 @@ sub parse_files_in_hash {
 	find(\&parse_file, $root_folder);
 }
 
+sub make_folder_dependencies {
+	print "\nFolder dependencies (" . keys (%existing_folders) . ")\n" if $debug;
+	print "===================\n" if $debug;
+	my $root = getcwd;
+	chdir($root_folder);
+	foreach my $key (keys %existing_folders) {
+		print "$key $existing_folders{$key}\n" if $debug;
+		foreach my $file (@{$existing_folders{$key}}) {
+			open FILE, "<$existing_files{$file}/$file" or die $!;
+			my @include_files = grep /#include/, <FILE>;
+			foreach my $include_line (@include_files) {
+				chomp($include_line);
+
+				if ($include_line =~ m/^ *#include *[<"](.*)[">].*$/) {
+					# print "  $file includes $1\n";
+					if (is_file_known($1)) {
+						my @splitted_folder = split(/\//, $existing_files{$1});
+						$key =~ s/\.\///;
+						if (scalar(@splitted_folder) == 2) {
+							print "  adding $key -> $splitted_folder[1]\n"
+								if $debug;
+							push(@{$folder_dependencies{$key}},
+									$splitted_folder[1]);
+						} else {
+							print "  adding $key -> Root\n"
+								if $debug;
+							push(@{$folder_dependencies{$key}}, "Root");
+						}
+# push(@{$folder_dependencies{$key}}, $file);
+					} else {
+							print "  adding $key -> Unknown\n"
+								if $debug;
+							push(@{$folder_dependencies{$key}}, "Unknown");
+					}
+				}
+			}
+			close FILE;
+		}
+	}
+	chdir($root);
+}
+
 ################################################################################
 #  Main program                                                                #
 ################################################################################
@@ -244,8 +303,13 @@ print "gengraph - A script for making dependency graph for source code\n\n";
 &open_dot_file($DOT_FILEHANDLE, "$dotfile\.$dotextension");
 
 &print_graph_header($DOT_FILEHANDLE);
-&make_subgraphs($DOT_FILEHANDLE);
-&parse_files_in_hash;
+if ($folder_view) {
+	&make_folder_dependencies;
+	&print_folder_dependencies($DOT_FILEHANDLE);
+} else {
+	&make_subgraphs($DOT_FILEHANDLE);
+	&parse_files_in_hash;
+}
 &print_graph_footer($DOT_FILEHANDLE);
 
 &close_dot_file($DOT_FILEHANDLE);
