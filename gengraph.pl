@@ -162,6 +162,7 @@ sub print_folder_dependencies {
 		my @unique = keys %hash;
 		# Replace . with Root, this should be done in a nicer way.
 		$key =~ s/^.$/Root/g;
+		$key =~ s/\.\///g;
 		foreach my $folder (@unique) {
 			print $file "  \"$key\" -> \"$folder\"\n";
 		}
@@ -267,9 +268,9 @@ sub make_folder_dependencies {
 
 				if ($include_line =~ m/^ *#include *[<"](.*)[">].*$/) {
 					# print "  $file includes $1\n";
+					$key =~ s/\.\///g;
 					if (is_file_known($1)) {
 						my @splitted_folder = split(/\//, $existing_files{$1});
-						$key =~ s/\.\///;
 						if (scalar(@splitted_folder) == 2) {
 							print "  adding $key -> $splitted_folder[1]\n"
 								if $debug;
@@ -282,7 +283,7 @@ sub make_folder_dependencies {
 						}
 # push(@{$folder_dependencies{$key}}, $file);
 					} else {
-							print "  adding $key -> Unknown\n"
+							print "  *adding $key -> Unknown\n"
 								if $debug;
 							push(@{$folder_dependencies{$key}}, "Unknown");
 					}
