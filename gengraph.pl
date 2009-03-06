@@ -28,6 +28,20 @@ my %folder_dependencies;
 ################################################################################
 #  Sub routines                                                                #
 ################################################################################
+sub print_help {
+	print "Usage: ./genperl [-d | -f | -h | -png | -1 | -dot | -neato | -twopi]";
+	print " path\n";
+	print "                 -d      For debug information\n";
+	print "                 -f      For folder dependencies\n";
+	print "                 -h      This help\n";
+	print "                 -png    Generates a picture in png format\n";
+	print "                 -1      Folder level, i.e. 1 to any number is";
+	print " possible\n";
+	print "                 -dot    Generates a dot graph\n";
+	print "                 -neato  Generates a neato graph\n";
+	print "                 -twopi  Generates a twopi graph\n";
+}
+
 sub parse_inparameters {
 	foreach my $arg (@ARGV) {
 		if ($arg =~ m/^-d$/) {
@@ -45,6 +59,9 @@ sub parse_inparameters {
 			$picture_ext = "png";
 		} elsif ($arg =~ m/^-f$/) {
 			$folder_view = 1;
+		} elsif ($arg =~ m/^-h$/) {
+            &print_help;
+			exit;
 		} else {
 			$root_folder = $arg;
 		}
