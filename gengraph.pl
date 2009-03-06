@@ -26,7 +26,7 @@ my %existing_folders;
 my %folder_dependencies;
 
 ################################################################################
-#  Sub routines                                                                #
+#  Printing sub routines                                                       #
 ################################################################################
 sub print_help {
 	print "Usage: ./genperl [-d | -f | -h | -png | -1 | -dot | -neato | -twopi]";
@@ -42,6 +42,82 @@ sub print_help {
 	print "                 -twopi  Generates a twopi graph\n";
 }
 
+sub print_file_list {
+	print "\nFile list\n=========\n";
+	foreach my $key (sort {$existing_files{$a} cmp $existing_files{$b}}
+					 keys %existing_files) {
+		print "  $key $existing_files{$key}\n";
+	}
+}
+
+sub print_folder_list {
+	print "\nFolder list (" . keys (%existing_folders) . ")\n";
+	print "===================\n";
+	foreach my $key (keys %existing_folders) {
+		print "$key $existing_folders{$key}\n";
+		foreach my $file (@{$existing_folders{$key}}) {
+			print "  $file\n";
+		}
+	}
+}
+
+sub print_folder_dependencies {
+	my $file = $_[0];
+	foreach my $key (keys %folder_dependencies) {
+		my %hash   = map { $_, 1 } @{$folder_dependencies{$key}};
+		my @unique = keys %hash;
+		# Replace . with Root, this should be done in a nicer way.
+		$key =~ s/^.$/Root/g;
+		$key =~ s/\.\///g;
+		foreach my $folder (@unique) {
+			print $file "  \"$key\" -> \"$folder\"\n";
+		}
+	}
+}
+
+sub print_graph_header {
+	my $file = $_[0];
+	print "\nGraph header\n============\n" if $debug;
+	print $file "digraph G {\n";
+	print "digraph G {\n" if $debug;
+}
+
+sub print_graph_footer {
+	my $file = $_[0];
+	print "\nGraph footer\n============\n" if $debug;
+	print $file "}\n";
+	print "}\n" if $debug;
+}
+
+sub show_globals {
+	print "Global variables\n";
+	print "================\n";
+	print "debug: $debug\n";
+	print "level: $level\n";
+	print "graphvis: $graphvis\n";
+	print "dotfile: $dotfile\n";
+	print "dotextension: $dotextension\n";
+	print "picture_ext: $picture_ext\n";
+	print "root_folder: $root_folder\n";
+	print "folder_view: $folder_view\n";
+	print "\n";
+}
+
+################################################################################
+#  Utility sub routines                                                        #
+################################################################################
+sub is_file_known {
+	my $file_to_check = $_[0];
+	if ($existing_files{$file_to_check}) {
+		print "File exist on path $existing_files{$file_to_check}\n" if $debug;
+		return 1;
+	}
+	return 0;
+}
+
+################################################################################
+#  Parsing sub routines                                                        #
+################################################################################
 sub parse_inparameters {
 	foreach my $arg (@ARGV) {
 		if ($arg =~ m/^-d$/) {
@@ -71,20 +147,6 @@ sub parse_inparameters {
 	print "=====================\n" if $debug;
 	map { print "$_\n" } @ARGV if $debug;
 	print "\n" if $debug;
-}
-
-sub show_globals {
-	print "Global variables\n";
-	print "================\n";
-	print "debug: $debug\n";
-	print "level: $level\n";
-	print "graphvis: $graphvis\n";
-	print "dotfile: $dotfile\n";
-	print "dotextension: $dotextension\n";
-	print "picture_ext: $picture_ext\n";
-	print "root_folder: $root_folder\n";
-	print "folder_view: $folder_view\n";
-	print "\n";
 }
 
 sub make_graph {
@@ -153,48 +215,6 @@ sub generate_file_lists {
 	}
 }
 
-sub print_file_list {
-	print "\nFile list\n=========\n";
-	foreach my $key (sort {$existing_files{$a} cmp $existing_files{$b}}
-					 keys %existing_files) {
-		print "  $key $existing_files{$key}\n";
-	}
-}
-
-sub print_folder_list {
-	print "\nFolder list (" . keys (%existing_folders) . ")\n";
-	print "===================\n";
-	foreach my $key (keys %existing_folders) {
-		print "$key $existing_folders{$key}\n";
-		foreach my $file (@{$existing_folders{$key}}) {
-			print "  $file\n";
-		}
-	}
-}
-
-sub print_folder_dependencies {
-	my $file = $_[0];
-	foreach my $key (keys %folder_dependencies) {
-		my %hash   = map { $_, 1 } @{$folder_dependencies{$key}};
-		my @unique = keys %hash;
-		# Replace . with Root, this should be done in a nicer way.
-		$key =~ s/^.$/Root/g;
-		$key =~ s/\.\///g;
-		foreach my $folder (@unique) {
-			print $file "  \"$key\" -> \"$folder\"\n";
-		}
-	}
-}
-
-sub is_file_known {
-	my $file_to_check = $_[0];
-	if ($existing_files{$file_to_check}) {
-		print "File exist on path $existing_files{$file_to_check}\n" if $debug;
-		return 1;
-	}
-	return 0;
-}
-
 sub make_subgraphs {
 	my $file = $_[0];
 	print "\nMake subgraphs\n==============\n" if $debug;
@@ -224,20 +244,6 @@ sub open_dot_file {
 
 sub close_dot_file {
 	close $_[0];
-}
-
-sub print_graph_header {
-	my $file = $_[0];
-	print "\nGraph header\n============\n" if $debug;
-	print $file "digraph G {\n";
-	print "digraph G {\n" if $debug;
-}
-
-sub print_graph_footer {
-	my $file = $_[0];
-	print "\nGraph footer\n============\n" if $debug;
-	print $file "}\n";
-	print "}\n" if $debug;
 }
 
 sub parse_file {
@@ -288,7 +294,7 @@ sub make_folder_dependencies {
 					$key =~ s/\.\///g;
 					if (is_file_known($1)) {
 						my @splitted_folder = split(/\//, $existing_files{$1});
-						if (scalar(@splitted_folder) == 2) {
+						if (scalar(@splitted_folder) >= 2) {
 							print "  adding $key -> $splitted_folder[1]\n"
 								if $debug;
 							push(@{$folder_dependencies{$key}},
@@ -298,7 +304,6 @@ sub make_folder_dependencies {
 								if $debug;
 							push(@{$folder_dependencies{$key}}, "Root");
 						}
-# push(@{$folder_dependencies{$key}}, $file);
 					} else {
 							print "  *adding $key -> Unknown\n"
 								if $debug;
