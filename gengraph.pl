@@ -16,14 +16,18 @@ my $graphvis = "";
 my $dotfile = "mygraph";
 my $dotextension = "dot";
 my $picture_ext = "jpg";
-my $root_folder = ".";
+my $script_folder = getcwd;
+my $root_folder = $script_folder;
 my $folder_view = 0;
 
 my $DOT_FILEHANDLE;
 
-my %existing_files;
+my %file_list_hash;
 my %existing_folders;
 my %folder_dependencies;
+
+# Used for handing indent for the written graph.
+my $current_indents;
 
 ################################################################################
 #  Printing sub routines                                                       #
@@ -44,9 +48,9 @@ sub print_help {
 
 sub print_file_list {
 	print "\nFile list\n=========\n";
-	foreach my $key (sort {$existing_files{$a} cmp $existing_files{$b}}
-					 keys %existing_files) {
-		print "  $key $existing_files{$key}\n";
+	foreach my $key (sort {$file_list_hash{$a} cmp $file_list_hash{$b}}
+					 keys %file_list_hash) {
+		print "  $key $file_list_hash{$key}\n";
 	}
 }
 
@@ -99,6 +103,7 @@ sub show_globals {
 	print "dotextension: $dotextension\n";
 	print "picture_ext: $picture_ext\n";
 	print "root_folder: $root_folder\n";
+	print "script_folder: $script_folder\n";
 	print "folder_view: $folder_view\n";
 	print "\n";
 }
@@ -106,10 +111,36 @@ sub show_globals {
 ################################################################################
 #  Utility sub routines                                                        #
 ################################################################################
+sub write_to_graph {
+	my $string_to_print = $_[0];
+	print $string_to_print if $debug;
+	print $DOT_FILEHANDLE $string_to_print;
+}
+
+sub get_name_of_graph {
+	my @name_of_graph = split(/\//, $root_folder);
+	return $name_of_graph[-1];
+}
+
+# Function removes the ending slash of a string give as inparameter.
+sub remove_end_slash {
+	my $path = $_[0];
+	$path =~ s/[\\\/]$//;
+	return $path;
+}
+
+# Function that removes the preceding dot.
+sub remove_start_dot {
+	my $path = $_[0];
+	$path =~ s/^\.//;
+	return $path;
+}
+
+# File that is used to check whether a file is known.
 sub is_file_known {
 	my $file_to_check = $_[0];
-	if ($existing_files{$file_to_check}) {
-		print "File exist on path $existing_files{$file_to_check}\n" if $debug;
+	if ($file_list_hash{$file_to_check}) {
+		print "File exist on path $file_list_hash{$file_to_check}\n" if $debug;
 		return 1;
 	}
 	return 0;
@@ -139,7 +170,14 @@ sub parse_inparameters {
             &print_help;
 			exit;
 		} else {
-			$root_folder = $arg;
+			if (-d $arg) {
+				chdir ($arg);
+				$root_folder = getcwd;
+			} else {
+				# Error, fail nicely!
+				print "$arg not valid path!\n";
+				exit;
+			}
 		}
 	}
 
@@ -163,12 +201,14 @@ sub save_files {
 	if ($_ =~ m/\.[ch]$/) {
 		my $file = $_;
 		my $dir = $File::Find::dir;
+		$dir =~ s/^.[\/]*//;
 
 		print "File: $file\n" if $debug;
-		print "Dir:  $dir\n\n" if $debug;
+		print "Dir:  $dir\n" if $debug;
+		print "Path: $File::Find::name\n";
 
 		# Store the file name
-		$existing_files{$file} = $dir;
+		$file_list_hash{$file} = $dir;
 
 		my @splitted_folder = split(/\//, $dir);
 		# This is tricky, we have some special cases here. First we need to take
@@ -200,19 +240,69 @@ sub save_files {
 			push(@{$existing_folders{$splitted_folder[0]}}, $file);
 		}
 	}
+	print "\n\n" if $debug;
 }
 
-sub generate_file_lists {
-	my $root = getcwd;
-	if (-d $_[0]) {
-		chdir($_[0]);
-		find(\&save_files, ".");
-		&print_file_list if $debug;
-		&print_folder_list if $debug;
-		chdir($root);
-	} else {
-		print "Unknown root folder: $_[0]\n";
+sub get_remaining_files {
+	if ($_ =~ m/\.[ch]$/) {
+		write_to_graph("$current_indents    \"$_\"\n");
+		$file_list_hash{$_} = getcwd;
 	}
+}
+
+# This is a recursive function that will traverse all folders from the base of
+# the provided root folder. When $level variable have decreaed to zero, then
+# then File::Find function will look after filenames only in the rest of the
+# subdirectories.
+sub traversefolders {
+	my $folder = $_[0];
+	my $level = $_[1];
+	my $offset = $_[2];
+	my $offset_string = (" " x $offset);
+
+	my $inpath = getcwd;
+	chdir($folder);
+
+	opendir(DIR, ".");
+	my @files = readdir(DIR);
+	closedir(DIR);
+
+	# Write header and subgraph headers
+	if ($offset == 0) {
+		my $name_of_graph = &get_name_of_graph;
+		&write_to_graph("digraph ");
+		&write_to_graph("$name_of_graph\_\_$level {\n");
+	} elsif ($offset > 0) {
+		&write_to_graph("\n" . $offset_string . "subgraph \"cluster");
+		&write_to_graph("$folder\_\_$level\" {\n");
+		&write_to_graph($offset_string . "    label = \"$folder\"\n");
+	}
+
+	foreach my $file (@files) {
+		# We don't want to traverse . and ..
+		next if ($file eq "." or $file eq "..");
+
+		# Save the current indentation offset for the find function.
+		$current_indents = $offset_string;
+
+		if ($level == 0 and -d $file) {
+			find(\&get_remaining_files, $file);
+			next;
+		}
+
+		if (-f $file) {
+			# We are only interested in c-, and h-files for the moment.
+			if ($file =~ m/\.[ch]$/) {
+				&write_to_graph("$offset_string    \"$file\"\n");
+				$file_list_hash{$file} = getcwd;
+			}
+			next;
+		}
+		
+		&traversefolders($file, $level - 1, $offset + 4);
+	}
+	chdir($inpath);
+	&write_to_graph("$offset_string}\n");
 }
 
 sub make_subgraphs {
@@ -239,11 +329,13 @@ sub make_subgraphs {
 }
 
 sub open_dot_file {
-	open $_[0], ">$_[1]", or die $!;
+	open $_[0], ">$script_folder/$_[1]", or die $!;
+	print "Opened file: $_[1]\n" if $debug;
 }
 
 sub close_dot_file {
 	close $_[0];
+	print "Closed file: $_[0]\n" if $debug;
 }
 
 sub parse_file {
@@ -284,7 +376,7 @@ sub make_folder_dependencies {
 	foreach my $key (keys %existing_folders) {
 		print "$key $existing_folders{$key}\n" if $debug;
 		foreach my $file (@{$existing_folders{$key}}) {
-			open FILE, "<$existing_files{$file}/$file" or die $!;
+			open FILE, "<$file_list_hash{$file}/$file" or die $!;
 			my @include_files = grep /#include/, <FILE>;
 			foreach my $include_line (@include_files) {
 				chomp($include_line);
@@ -293,7 +385,7 @@ sub make_folder_dependencies {
 					# print "  $file includes $1\n";
 					$key =~ s/\.\///g;
 					if (is_file_known($1)) {
-						my @splitted_folder = split(/\//, $existing_files{$1});
+						my @splitted_folder = split(/\//, $file_list_hash{$1});
 						if (scalar(@splitted_folder) >= 2) {
 							print "  adding $key -> $splitted_folder[1]\n"
 								if $debug;
@@ -323,9 +415,11 @@ sub make_folder_dependencies {
 print "gengraph - A script for making dependency graph for source code\n\n";
 &parse_inparameters;
 &show_globals if $debug;
-&generate_file_lists($root_folder);
-
 &open_dot_file($DOT_FILEHANDLE, "$dotfile\.$dotextension");
+&traversefolders($root_folder, $level, 0);
+&close_dot_file($DOT_FILEHANDLE); # Remove later on...
+&print_file_list;
+exit;
 
 &print_graph_header($DOT_FILEHANDLE);
 if ($folder_view) {
