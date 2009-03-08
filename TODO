@@ -1,0 +1,12 @@
+Known things that should be done.
+=================================
+
+- Support for files that are including files using a path. I.e for the moment
+  it's only supported when doing like this
+    #include "foo.h"
+
+  but if a file include like this, it won't work as supposed to
+    #include "baa/foo"
+
+- The -f parameter isn't working anymore, since rewriting the traversal
+  function.

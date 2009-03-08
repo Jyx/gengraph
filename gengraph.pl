@@ -12,7 +12,7 @@ use File::Find;
 ################################################################################
 my $debug = 0;
 my $level = 0;
-my $graphvis = "";
+my $graphviz = "";
 my $dotfile = "mygraph";
 my $dotextension = "dot";
 my $picture_ext = "jpg";
@@ -79,26 +79,12 @@ sub print_folder_dependencies {
 	}
 }
 
-sub print_graph_header {
-	my $file = $_[0];
-	print "\nGraph header\n============\n" if $debug;
-	print $file "digraph G {\n";
-	print "digraph G {\n" if $debug;
-}
-
-sub print_graph_footer {
-	my $file = $_[0];
-	print "\nGraph footer\n============\n" if $debug;
-	print $file "}\n";
-	print "}\n" if $debug;
-}
-
 sub show_globals {
 	print "Global variables\n";
 	print "================\n";
 	print "debug: $debug\n";
 	print "level: $level\n";
-	print "graphvis: $graphvis\n";
+	print "graphviz: $graphviz\n";
 	print "dotfile: $dotfile\n";
 	print "dotextension: $dotextension\n";
 	print "picture_ext: $picture_ext\n";
@@ -146,6 +132,11 @@ sub is_file_known {
 	return 0;
 }
 
+# Close the graph by writing an ending } character
+sub close_graph {
+	write_to_graph("}\n");
+}
+
 ################################################################################
 #  Parsing sub routines                                                        #
 ################################################################################
@@ -157,11 +148,11 @@ sub parse_inparameters {
 			$arg =~ s/-//;
 			$level = $arg;
 		} elsif ($arg =~ m/^-dot$/) {
-			$graphvis = "dot";
+			$graphviz = "dot";
 		} elsif ($arg =~ m/^-neato$/) {
-			$graphvis = "neato";
+			$graphviz = "neato";
 		} elsif ($arg =~ m/^-twopi$/) {
-			$graphvis = "twopi";
+			$graphviz = "twopi";
 		} elsif ($arg =~ m/^-png$/) {
 			$picture_ext = "png";
 		} elsif ($arg =~ m/^-f$/) {
@@ -188,10 +179,11 @@ sub parse_inparameters {
 }
 
 sub make_graph {
+	chdir($script_folder);
 	my $filename = "$dotfile\.$dotextension";
 	if (-e $filename) {
-		print "Generating $graphvis graph ...\n";
-		system("$graphvis -T$picture_ext $filename -o $dotfile\_$graphvis\.$picture_ext");
+		print "Generating $graphviz graph ...\n";
+		system("$graphviz -T$picture_ext $filename -o $dotfile\_$graphviz\.$picture_ext");
 	} else {
 		print "Couldn't open file $filename in folder " . getcwd . "\n";
 	}
@@ -244,6 +236,7 @@ sub save_files {
 }
 
 sub get_remaining_files {
+	# We are only interested in c-, and h-files for the moment.
 	if ($_ =~ m/\.[ch]$/) {
 		write_to_graph("$current_indents    \"$_\"\n");
 		$file_list_hash{$_} = getcwd;
@@ -272,10 +265,34 @@ sub traversefolders {
 		my $name_of_graph = &get_name_of_graph;
 		&write_to_graph("digraph ");
 		&write_to_graph("$name_of_graph\_\_$level {\n");
+		&write_to_graph("    graph [fontsize=24];\n");
+		&write_to_graph("    edge [color = blue];\n");
+		&write_to_graph("    ranksep = 1.5;\n");
+		&write_to_graph("    nodesep = .25;\n");
+
+		# Twopi specific settings.
+		if ($graphviz eq "dot") {
+		}
+
+		# Neato specific settings.
+		if ($graphviz eq "neato") {
+			&write_to_graph("    edge [len=2.5];\n");
+		}
+
+		# Twopi specific settings.
+		if ($graphviz eq "twopi") {
+		}
 	} elsif ($offset > 0) {
 		&write_to_graph("\n" . $offset_string . "subgraph \"cluster");
 		&write_to_graph("$folder\_\_$level\" {\n");
-		&write_to_graph($offset_string . "    label = \"$folder\"\n");
+		&write_to_graph($offset_string . "    label = \"$folder\";\n");
+
+		# Deal with the colors of the subgraph.
+		my $bgcolor = "grey";
+		if ($level % 2) {
+			$bgcolor = "lightgrey";
+		}
+		&write_to_graph($offset_string . "    bgcolor = \"$bgcolor\";\n");
 	}
 
 	foreach my $file (@files) {
@@ -302,30 +319,8 @@ sub traversefolders {
 		&traversefolders($file, $level - 1, $offset + 4);
 	}
 	chdir($inpath);
-	&write_to_graph("$offset_string}\n");
-}
 
-sub make_subgraphs {
-	my $file = $_[0];
-	print "\nMake subgraphs\n==============\n" if $debug;
-	foreach my $key (keys %existing_folders) {
-		if ($key eq ".") {
-			print $file "  subgraph \"clusterRoot\" {\n";
-			print $file "    bgcolor=grey\n";
-			print $file "    label = \"Root\"\n";
-		} else {
-			my $modified_header = $key;
-			$modified_header =~ s/\.\///;
-			print $file "  subgraph \"cluster$modified_header\" {\n";
-			print $file "    bgcolor=grey\n";
-			print $file "    label = \"$modified_header\"\n";
-		}
-		foreach my $filename (@{$existing_folders{$key}}) {
-			print "  $filename\n" if $debug;
-			print $file "    \"$filename\"\n";
-		}
-		print $file "  }\n\n";
-	}
+	&write_to_graph("$offset_string}\n") if ($offset > 0);
 }
 
 sub open_dot_file {
@@ -338,7 +333,7 @@ sub close_dot_file {
 	print "Closed file: $_[0]\n" if $debug;
 }
 
-sub parse_file {
+sub parse_individual_file {
 	my $parsed_filename = $_;
 	my $file = getcwd . "/" . $_;
 	if (-e $file) {
@@ -350,13 +345,13 @@ sub parse_file {
 
 			if ($include_line =~ m/^ *#include *[<"](.*)[">].*$/) {
 				if (&is_file_known($1)) {
-					print "  \"$parsed_filename\"-> \"$1\"\n" if $debug;
-					print $DOT_FILEHANDLE "  \"$parsed_filename\"-> \"$1\"\n";
+					print "    \"$parsed_filename\"-> \"$1\"\n" if $debug;
+					print $DOT_FILEHANDLE "    \"$parsed_filename\"-> \"$1\"\n";
 				} else {
-					print "  \"$1\" [color = red];\n" if $debug;
-					print "  \"$parsed_filename\"-> \"$1\"\n" if $debug;
-					print $DOT_FILEHANDLE "  \"$1\" [color = red];\n";
-					print $DOT_FILEHANDLE "  \"$parsed_filename\"-> \"$1\"\n";
+					print "      \"$1\" [color = red];\n" if $debug;
+					print "      \"$parsed_filename\"-> \"$1\"\n" if $debug;
+					print $DOT_FILEHANDLE "    \"$1\" [color = red];\n";
+					print $DOT_FILEHANDLE "    \"$parsed_filename\"-> \"$1\"\n";
 				}
 			}
 		}
@@ -365,7 +360,8 @@ sub parse_file {
 }
 
 sub parse_files_in_hash {
-	find(\&parse_file, $root_folder);
+	print $DOT_FILEHANDLE "\n";
+	find(\&parse_individual_file, $root_folder);
 }
 
 sub make_folder_dependencies {
@@ -417,20 +413,19 @@ print "gengraph - A script for making dependency graph for source code\n\n";
 &show_globals if $debug;
 &open_dot_file($DOT_FILEHANDLE, "$dotfile\.$dotextension");
 &traversefolders($root_folder, $level, 0);
-&close_dot_file($DOT_FILEHANDLE); # Remove later on...
-&print_file_list;
-exit;
+&print_file_list if $debug;
 
-&print_graph_header($DOT_FILEHANDLE);
 if ($folder_view) {
 	&make_folder_dependencies;
 	&print_folder_dependencies($DOT_FILEHANDLE);
 } else {
-	&make_subgraphs($DOT_FILEHANDLE);
 	&parse_files_in_hash;
 }
-&print_graph_footer($DOT_FILEHANDLE);
+
+&close_graph($DOT_FILEHANDLE);
 
 &close_dot_file($DOT_FILEHANDLE);
 
-&make_graph if $graphvis;
+system("cat $script_folder/$dotfile\.$dotextension") if $debug;
+
+&make_graph if $graphviz;
