@@ -25,9 +25,15 @@ my $DOT_FILEHANDLE;
 my %file_list_hash;
 my %existing_folders;
 my %folder_dependencies;
+my %unknown_file_list_hash;
 
 # Used for handing indent for the written graph.
 my $current_indents;
+
+# Used for making uniq id's to subgraphs.
+my $uniq_id = 0;
+
+my @temporary_file_storage;
 
 ################################################################################
 #  Printing sub routines                                                       #
@@ -132,6 +138,14 @@ sub is_file_known {
 	return 0;
 }
 
+sub unknown_file_already_stored {
+	#my $filename = $_[0];
+	if ($unknown_file_list_hash{$_[0]}) {
+		return 1;
+	}
+	return 0;
+}
+
 # Close the graph by writing an ending } character
 sub close_graph {
 	write_to_graph("}\n");
@@ -189,52 +203,6 @@ sub make_graph {
 	}
 }
 
-sub save_files {
-	if ($_ =~ m/\.[ch]$/) {
-		my $file = $_;
-		my $dir = $File::Find::dir;
-		$dir =~ s/^.[\/]*//;
-
-		print "File: $file\n" if $debug;
-		print "Dir:  $dir\n" if $debug;
-		print "Path: $File::Find::name\n";
-
-		# Store the file name
-		$file_list_hash{$file} = $dir;
-
-		my @splitted_folder = split(/\//, $dir);
-		# This is tricky, we have some special cases here. First we need to take
-		# care of when the number of subfolder is greater than the provided
-		# level variable. All those files in sub directories further down we
-		# treat as a if they exist in the same sub folder.
-		#
-		# The next case is when files exist between 1 and the variable level
-		# number of sub folders.
-		#
-		# The last case, the else, is when files are located in the root folder.
-		my $size_of_path = scalar(@splitted_folder);
-		my $dir_string = "";
-
-		if ($size_of_path > $level) {
-			for my $i (0 .. $level) {
-				$dir_string = $dir_string . "$splitted_folder[$i]";
-				$dir_string = $dir_string . "\/" if ($i < $level);
-				print "dir_string: $dir_string\n" if $debug;
-			}
-			push(@{$existing_folders{$dir_string}}, $file);
-		} elsif ($size_of_path > 1 && $size_of_path <= $level) {
-			for my $i (0 .. $size_of_path) {
-				$dir_string = $dir_string . "$splitted_folder[$i]";
-				$dir_string = $dir_string . "\/" if ($i < $size_of_path);
-			}
-			push(@{$existing_folders{$dir_string}}, $file);
-		} else {
-			push(@{$existing_folders{$splitted_folder[0]}}, $file);
-		}
-	}
-	print "\n\n" if $debug;
-}
-
 sub get_remaining_files {
 	# We are only interested in c-, and h-files for the moment.
 	if ($_ =~ m/\.[ch]$/) {
@@ -266,7 +234,8 @@ sub traversefolders {
 		&write_to_graph("digraph ");
 		&write_to_graph("$name_of_graph\_\_$level {\n");
 		&write_to_graph("    graph [fontsize=24];\n");
-		&write_to_graph("    edge [color = blue];\n");
+		&write_to_graph("    edge [color = blue penwidth=0.4];\n");
+		&write_to_graph("    rankdir = \"LR\";\n");
 		&write_to_graph("    ranksep = 1.5;\n");
 		&write_to_graph("    nodesep = .25;\n");
 
@@ -284,13 +253,15 @@ sub traversefolders {
 		}
 	} elsif ($offset > 0) {
 		&write_to_graph("\n" . $offset_string . "subgraph \"cluster");
-		&write_to_graph("$folder\_\_$level\" {\n");
+		&write_to_graph("$folder\_\_$uniq_id\" {\n");
 		&write_to_graph($offset_string . "    label = \"$folder\";\n");
+		&write_to_graph($offset_string . "    fontname = \"arial\";\n");
+		$uniq_id++;
 
 		# Deal with the colors of the subgraph.
-		my $bgcolor = "grey";
+		my $bgcolor = "lemonchiffon1";
 		if ($level % 2) {
-			$bgcolor = "lightgrey";
+			$bgcolor = "khaki";
 		}
 		&write_to_graph($offset_string . "    bgcolor = \"$bgcolor\";\n");
 	}
@@ -344,14 +315,20 @@ sub parse_individual_file {
 			chomp($include_line);
 
 			if ($include_line =~ m/^ *#include *[<"](.*)[">].*$/) {
-				if (&is_file_known($1)) {
-					print "    \"$parsed_filename\"-> \"$1\"\n" if $debug;
-					print $DOT_FILEHANDLE "    \"$parsed_filename\"-> \"$1\"\n";
+				if (&is_file_known($1) or &unknown_file_already_stored($1)) {
+					#&write_to_graph("    \"$parsed_filename\"-> \"$1\"\n");
+					push(@temporary_file_storage,
+						 "    \"$parsed_filename\"-> \"$1\"\n");
 				} else {
-					print "      \"$1\" [color = red];\n" if $debug;
-					print "      \"$parsed_filename\"-> \"$1\"\n" if $debug;
-					print $DOT_FILEHANDLE "    \"$1\" [color = red];\n";
-					print $DOT_FILEHANDLE "    \"$parsed_filename\"-> \"$1\"\n";
+					#&write_to_graph("    \"$1\" [shape = octagon color = red];\n");
+					push(@temporary_file_storage,
+						 "    \"$1\" [color = red];\n");
+
+					#&write_to_graph("    \"$parsed_filename\"-> \"$1\"\n"); 
+					push(@temporary_file_storage,
+						 "    \"$parsed_filename\"-> \"$1\"\n"); 
+					# Add "unknown" file to the hash.
+					$unknown_file_list_hash{$1} = 1;
 				}
 			}
 		}
@@ -362,6 +339,7 @@ sub parse_individual_file {
 sub parse_files_in_hash {
 	print $DOT_FILEHANDLE "\n";
 	find(\&parse_individual_file, $root_folder);
+	map { &write_to_graph("$_") } sort @temporary_file_storage;
 }
 
 sub make_folder_dependencies {
