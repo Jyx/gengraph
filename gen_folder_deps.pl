@@ -7,6 +7,7 @@ use warnings;
 use Cwd;
 use File::Find;
 
+
 ################################################################################
 #  Global scalars, arrays and hashes                                           #
 ################################################################################
@@ -175,6 +176,17 @@ sub traverse_tree {
 	}
 }
 
+sub is_already_in_hash {
+	my $orgfile = $_[0];
+	my $incfile = $_[1];
+
+	foreach my $file (@{$folder_folder_hash{$orgfile}}) {
+		#print "$orgfile includes $file\n" if $debug;
+		return 1 if $file eq $orgfile;
+	}
+	return 0;
+}
+
 sub parse_files {
 	foreach my $key (sort {$file_path_true_hash{$a} cmp $file_path_true_hash{$b}}
 					 sort keys %file_path_true_hash) {
@@ -182,17 +194,22 @@ sub parse_files {
 		my @include_files = grep /#include/, <FILE>;
 		close FILE;
 
+		#print "$file_path_true_hash{$key}/$key\n";
 		foreach my $include_line (@include_files) {
 			if ($include_line =~ m/^ *#include *[<"](.*)[">].*$/) {
+				chomp($include_line);
 				my $folder_value_from_include_file = $file_path_hash{$1};
 				my $folder_key_from_origin_file = $file_path_hash{$key};
 
 				# Don't store anything if it's an unknown file.
-				if (defined $folder_value_from_include_file) {
-					# And don't store links to it self.
-					next if ($folder_key_from_origin_file eq $folder_value_from_include_file);
-					$folder_folder_hash{$folder_key_from_origin_file} = $folder_value_from_include_file;
-				}
+				next if (!defined $folder_value_from_include_file);
+
+				# And don't store links to it self.
+				next if ($folder_key_from_origin_file eq $folder_value_from_include_file);
+
+				# Don't duplicate files array in the hash.
+				next if (&is_already_in_hash($folder_key_from_origin_file, $folder_value_from_include_file));
+				push(@{$folder_folder_hash{$folder_key_from_origin_file}}, $folder_value_from_include_file);
 			}
 		}
 	}
@@ -236,9 +253,22 @@ sub create_graph {
 		if ($graphviz eq "twopi") {
 		}
 
+		my @tmp;
+
 		foreach my $key (sort {$folder_folder_hash{$a} cmp $folder_folder_hash{$b}}
 						 sort keys %folder_folder_hash) {
-			&write_to_graph("    \"$key\" -> \"$folder_folder_hash{$key}\"\n");
+			foreach my $include_file (@{$folder_folder_hash{$key}}) {
+				push(@tmp, "    \"$key\" -> \"$include_file\"\n");
+				#&write_to_graph("    \"$key\" -> \"$include_file\"\n");
+			}
+		}
+
+		my %unique;
+		@unique{@tmp} = undef;
+		@tmp = keys %unique;
+
+		foreach my $line (@tmp) {
+				&write_to_graph($line);
 		}
 }
 
@@ -266,10 +296,8 @@ print "folders\n\n";
 &parse_inparameters;
 &show_globals if $debug;
 
-
-
 &traverse_tree(0, $root_folder);
-&print_file_list if $debug;
+#&print_file_list if $debug;
 
 &parse_files;
 &open_dot_file($DOT_FILEHANDLE, "$dotfile\.$dotextension");
