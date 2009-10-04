@@ -44,7 +44,7 @@ my @temporary_file_storage;
 #  Printing sub routines                                                       #
 ################################################################################
 sub print_help {
-	print "Usage: ./genperl [-d | -f | -h | -png | -1 | -dot | -neato | -twopi]";
+	print "Usage: ./genperl [-d | -h | -png | -1 | -dot | -neato | -twopi]";
 	print " path\n";
 	print "                 -d      For debug information\n";
 	print "                 -h      This help\n";
