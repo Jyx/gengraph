@@ -18,13 +18,18 @@ my $dotextension = "dot";
 my $picture_ext = "jpg";
 my $script_folder = getcwd;
 my $root_folder = $script_folder;
-my $folder_view = 0;
 
 my $DOT_FILEHANDLE;
 
-my %file_list_hash;
-my %existing_folders;
-my %folder_dependencies;
+# This hash contains all files (keys) on the filesystem and stores their path,
+# i.e. the path as the data.
+my %file_path_hash;
+
+# This hash contains all files (keys) and their path up to a certain $level.
+my %file_levelpath_hash;
+
+# Hash for "unknown" files, i.e files that isn't in the tree provided to the
+# script.
 my %unknown_file_list_hash;
 
 # Used for handing indent for the written graph.
@@ -42,7 +47,6 @@ sub print_help {
 	print "Usage: ./genperl [-d | -f | -h | -png | -1 | -dot | -neato | -twopi]";
 	print " path\n";
 	print "                 -d      For debug information\n";
-	print "                 -f      For folder dependencies\n";
 	print "                 -h      This help\n";
 	print "                 -png    Generates a picture in png format\n";
 	print "                 -1      Folder level, i.e. 1 to any number is";
@@ -54,34 +58,9 @@ sub print_help {
 
 sub print_file_list {
 	print "\nFile list\n=========\n";
-	foreach my $key (sort {$file_list_hash{$a} cmp $file_list_hash{$b}}
-					 keys %file_list_hash) {
-		print "  $key $file_list_hash{$key}\n";
-	}
-}
-
-sub print_folder_list {
-	print "\nFolder list (" . keys (%existing_folders) . ")\n";
-	print "===================\n";
-	foreach my $key (keys %existing_folders) {
-		print "$key $existing_folders{$key}\n";
-		foreach my $file (@{$existing_folders{$key}}) {
-			print "  $file\n";
-		}
-	}
-}
-
-sub print_folder_dependencies {
-	my $file = $_[0];
-	foreach my $key (keys %folder_dependencies) {
-		my %hash   = map { $_, 1 } @{$folder_dependencies{$key}};
-		my @unique = keys %hash;
-		# Replace . with Root, this should be done in a nicer way.
-		$key =~ s/^.$/Root/g;
-		$key =~ s/\.\///g;
-		foreach my $folder (@unique) {
-			print $file "  \"$key\" -> \"$folder\"\n";
-		}
+	foreach my $key (sort {$file_path_hash{$a} cmp $file_path_hash{$b}}
+					 keys %file_path_hash) {
+		print "  $key $file_path_hash{$key}\n";
 	}
 }
 
@@ -96,7 +75,6 @@ sub show_globals {
 	print "picture_ext: $picture_ext\n";
 	print "root_folder: $root_folder\n";
 	print "script_folder: $script_folder\n";
-	print "folder_view: $folder_view\n";
 	print "\n";
 }
 
@@ -131,8 +109,8 @@ sub remove_start_dot {
 # File that is used to check whether a file is known.
 sub is_file_known {
 	my $file_to_check = $_[0];
-	if ($file_list_hash{$file_to_check}) {
-		print "File exist on path $file_list_hash{$file_to_check}\n" if $debug;
+	if ($file_path_hash{$file_to_check}) {
+		print "File exist on path $file_path_hash{$file_to_check}\n" if $debug;
 		return 1;
 	}
 	return 0;
@@ -169,8 +147,6 @@ sub parse_inparameters {
 			$graphviz = "twopi";
 		} elsif ($arg =~ m/^-png$/) {
 			$picture_ext = "png";
-		} elsif ($arg =~ m/^-f$/) {
-			$folder_view = 1;
 		} elsif ($arg =~ m/^-h$/) {
             &print_help;
 			exit;
@@ -207,7 +183,7 @@ sub get_remaining_files {
 	# We are only interested in c-, and h-files for the moment.
 	if ($_ =~ m/\.[ch]$/) {
 		write_to_graph("$current_indents    \"$_\"\n");
-		$file_list_hash{$_} = getcwd;
+		$file_path_hash{$_} = getcwd;
 	}
 }
 
@@ -223,10 +199,6 @@ sub traversefolders {
 
 	my $inpath = getcwd;
 	chdir($folder);
-
-	opendir(DIR, ".");
-	my @files = readdir(DIR);
-	closedir(DIR);
 
 	# Write header and subgraph headers
 	if ($offset == 0) {
@@ -266,6 +238,10 @@ sub traversefolders {
 		&write_to_graph($offset_string . "    bgcolor = \"$bgcolor\";\n");
 	}
 
+	opendir(DIR, ".");
+	my @files = readdir(DIR);
+	closedir(DIR);
+
 	foreach my $file (@files) {
 		# We don't want to traverse . and ..
 		next if ($file eq "." or $file eq "..");
@@ -282,7 +258,9 @@ sub traversefolders {
 			# We are only interested in c-, and h-files for the moment.
 			if ($file =~ m/\.[ch]$/) {
 				&write_to_graph("$offset_string    \"$file\"\n");
-				$file_list_hash{$file} = getcwd;
+
+				# Here we store the file found and its actual (full) path.
+				$file_path_hash{$file} = getcwd;
 			}
 			next;
 		}
@@ -304,6 +282,8 @@ sub close_dot_file {
 	print "Closed file: $_[0]\n" if $debug;
 }
 
+# This function parses a single file searching for the files which it includes.
+# It writes a connection between the file itself and the files it includes.
 sub parse_individual_file {
 	my $parsed_filename = $_;
 	my $file = getcwd . "/" . $_;
@@ -311,22 +291,24 @@ sub parse_individual_file {
 		#print "Parse ... $file\n" if $debug;
 		open FILE, "<$file" or die $!;
 		my @include_files = grep /#include/, <FILE>;
+
+		# Loop through all the lines containing the text #include.
 		foreach my $include_line (@include_files) {
 			chomp($include_line);
 
 			if ($include_line =~ m/^ *#include *[<"](.*)[">].*$/) {
+				# Check if the file is already stored in the hash, i.e. known
+				# since the traverse stage done earlier.
 				if (&is_file_known($1) or &unknown_file_already_stored($1)) {
-					#&write_to_graph("    \"$parsed_filename\"-> \"$1\"\n");
 					push(@temporary_file_storage,
 						 "    \"$parsed_filename\"-> \"$1\"\n");
 				} else {
-					#&write_to_graph("    \"$1\" [shape = octagon color = red];\n");
 					push(@temporary_file_storage,
 						 "    \"$1\" [color = red];\n");
 
-					#&write_to_graph("    \"$parsed_filename\"-> \"$1\"\n"); 
 					push(@temporary_file_storage,
 						 "    \"$parsed_filename\"-> \"$1\"\n"); 
+
 					# Add "unknown" file to the hash.
 					$unknown_file_list_hash{$1} = 1;
 				}
@@ -342,47 +324,6 @@ sub parse_files_in_hash {
 	map { &write_to_graph("$_") } sort @temporary_file_storage;
 }
 
-sub make_folder_dependencies {
-	print "\nFolder dependencies (" . keys (%existing_folders) . ")\n" if $debug;
-	print "===================\n" if $debug;
-	my $root = getcwd;
-	chdir($root_folder);
-	foreach my $key (keys %existing_folders) {
-		print "$key $existing_folders{$key}\n" if $debug;
-		foreach my $file (@{$existing_folders{$key}}) {
-			open FILE, "<$file_list_hash{$file}/$file" or die $!;
-			my @include_files = grep /#include/, <FILE>;
-			foreach my $include_line (@include_files) {
-				chomp($include_line);
-
-				if ($include_line =~ m/^ *#include *[<"](.*)[">].*$/) {
-					# print "  $file includes $1\n";
-					$key =~ s/\.\///g;
-					if (is_file_known($1)) {
-						my @splitted_folder = split(/\//, $file_list_hash{$1});
-						if (scalar(@splitted_folder) >= 2) {
-							print "  adding $key -> $splitted_folder[1]\n"
-								if $debug;
-							push(@{$folder_dependencies{$key}},
-									$splitted_folder[1]);
-						} else {
-							print "  adding $key -> Root\n"
-								if $debug;
-							push(@{$folder_dependencies{$key}}, "Root");
-						}
-					} else {
-							print "  *adding $key -> Unknown\n"
-								if $debug;
-							push(@{$folder_dependencies{$key}}, "Unknown");
-					}
-				}
-			}
-			close FILE;
-		}
-	}
-	chdir($root);
-}
-
 ################################################################################
 #  Main program                                                                #
 ################################################################################
@@ -393,12 +334,7 @@ print "gengraph - A script for making dependency graph for source code\n\n";
 &traversefolders($root_folder, $level, 0);
 &print_file_list if $debug;
 
-if ($folder_view) {
-	&make_folder_dependencies;
-	&print_folder_dependencies($DOT_FILEHANDLE);
-} else {
-	&parse_files_in_hash;
-}
+&parse_files_in_hash;
 
 &close_graph($DOT_FILEHANDLE);
 
